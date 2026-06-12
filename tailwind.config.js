@@ -67,7 +67,14 @@ module.exports = {
             'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
             border: 'hsl(var(--sidebar-border))',
             ring: 'hsl(var(--sidebar-ring))'
-          }
+          },
+          // VENTEBEAST brand palette
+          navy: { 50:'#eef2f7', 100:'#cdd6e3', 300:'#7a90b2', 500:'#2e4a78', 600:'#243d66', 700:'#1c3052', 800:'#142340', 900:'#0c1729', 950:'#070e1c' },
+          ocean: { 400:'#3a9bcc', 500:'#1f7aab', 600:'#155a85', 700:'#0e3f60' },
+          jungle: { 400:'#5b8a5b', 500:'#3e6c3e', 600:'#2c5230', 700:'#1f3c22', 800:'#142a18' },
+          gold: { 400:'#e5c46a', 500:'#caa845', 600:'#a18632' },
+          rose: { 50:'#fdf2f5', 100:'#fbe4eb', 200:'#f6c4d3', 300:'#ed99b1', 400:'#dd6589', 500:'#c94168', 600:'#a82a4f', 700:'#852040' },
+          blush: { 100:'#f8e3e0', 200:'#ecc6c0', 300:'#d99e94', 400:'#c47a6e', 500:'#a85a4d' },
         },
         borderRadius: {
           lg: 'var(--radius)',

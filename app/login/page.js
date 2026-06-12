@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from '@/lib/store';
 import { toast } from 'sonner';
+import GoogleSignIn from '@/components/GoogleSignIn';
 
 function LoginInner() {
   const router = useRouter();
@@ -34,8 +35,17 @@ function LoginInner() {
       <div className="max-w-md w-full">
         <div className="text-center mb-12">
           <div className="text-[10px] tracking-[0.4em] uppercase text-white/40 mb-4">Welcome Back</div>
-          <h1 className="font-serif text-5xl">Sign In</h1>
+          <h1 className="font-display text-5xl">Sign In</h1>
         </div>
+
+        <GoogleSignIn />
+
+        <div className="flex items-center gap-3 my-6">
+          <div className="flex-1 h-px bg-white/10" />
+          <span className="text-[10px] tracking-[0.3em] uppercase text-white/40">or</span>
+          <div className="flex-1 h-px bg-white/10" />
+        </div>
+
         <form onSubmit={submit} className="space-y-6">
           <div>
             <label className="text-[10px] tracking-[0.3em] uppercase text-white/50">Email</label>

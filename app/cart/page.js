@@ -40,7 +40,7 @@ const CartPage = () => {
                     <div className="flex justify-between items-start">
                       <div>
                         <Link href={`/product/${item.slug}`} className="font-serif text-2xl hover:text-white/70">{item.name}</Link>
-                        <div className="text-[10px] tracking-[0.25em] uppercase text-white/50 mt-1">{item.size}</div>
+                        <div className="text-[10px] tracking-[0.25em] uppercase text-white/50 mt-1">{item.bundleLabel || item.size}</div>
                       </div>
                       <button onClick={() => removeFromCart(item.sku)} className="text-white/40 hover:text-white"><X className="w-5 h-5" /></button>
                     </div>

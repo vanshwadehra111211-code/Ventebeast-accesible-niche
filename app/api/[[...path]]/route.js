@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuid } from 'uuid';
+import { OAuth2Client } from 'google-auth-library';
 import { getDb } from '@/lib/mongodb';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
 import { buildSeedDocs } from '@/lib/seed';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
 const ok = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -83,6 +86,45 @@ async function handle(req, { params }) {
       const user = await currentUser(req);
       if (!user) return err('Unauthorized', 401);
       return ok({ user: { id: user._id, email: user.email, name: user.name, role: user.role, addresses: user.addresses || [], wishlist: user.wishlist || [] } });
+    }
+
+    if (path === 'auth/google' && method === 'POST') {
+      const { idToken } = await req.json();
+      if (!idToken) return err('ID token required');
+      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      if (!clientId) return err('Google OAuth not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in .env', 500);
+      let payload;
+      try {
+        const ticket = await googleClient.verifyIdToken({ idToken, audience: clientId });
+        payload = ticket.getPayload();
+      } catch (e) {
+        return err('Invalid Google token', 401);
+      }
+      if (!payload?.email || !payload.email_verified) return err('Google email not verified', 403);
+      let user = await db.collection('users').findOne({ email: payload.email.toLowerCase() });
+      if (!user) {
+        const role = isAdminEmail(payload.email) ? 'admin' : 'customer';
+        user = {
+          _id: uuid(),
+          email: payload.email.toLowerCase(),
+          name: payload.name || payload.email.split('@')[0],
+          avatarUrl: payload.picture,
+          googleId: payload.sub,
+          provider: 'google',
+          role,
+          wishlist: [], addresses: [],
+          createdAt: new Date(),
+        };
+        await db.collection('users').insertOne(user);
+      } else if (!user.googleId) {
+        await db.collection('users').updateOne({ _id: user._id }, { $set: { googleId: payload.sub, avatarUrl: payload.picture, provider: user.provider || 'hybrid' } });
+      }
+      if (isAdminEmail(user.email) && user.role !== 'admin') {
+        await db.collection('users').updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+        user.role = 'admin';
+      }
+      const token = signToken({ userId: user._id, role: user.role });
+      return ok({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
     }
 
     // ---------- PRODUCTS ----------
