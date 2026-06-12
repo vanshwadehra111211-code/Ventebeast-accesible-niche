@@ -176,7 +176,14 @@ async function handle(req, { params }) {
       const user = await currentUser(req);
       const adminCheck = requireAdmin(user); if (adminCheck) return adminCheck;
       const body = await req.json();
-      const doc = { _id: uuid(), ...body, createdAt: new Date(), updatedAt: new Date() };
+      const slugify = (s) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+      const slug = slugify(body.slug || body.name);
+      if (!slug) return err('Product name is required');
+      if (!body.images?.[0]) return err('Main image URL is required');
+      // Ensure slug is unique
+      const existing = await db.collection('products').findOne({ slug });
+      const finalSlug = existing ? `${slug}-${Date.now().toString(36)}` : slug;
+      const doc = { _id: uuid(), ...body, slug: finalSlug, createdAt: new Date(), updatedAt: new Date() };
       await db.collection('products').insertOne(doc);
       return ok({ product: doc });
     }

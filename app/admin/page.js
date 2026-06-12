@@ -495,7 +495,13 @@ const ReviewEditor = ({ review, products, onClose, onSave }) => {
 
 const ProductEditor = ({ product, collections, onClose, onSave }) => {
   const [p, setP] = useState(product);
-  const set = (k, v) => setP(x => ({ ...x, [k]: v }));
+  const slugify = (s) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  const set = (k, v) => setP(x => {
+    const next = { ...x, [k]: v };
+    // Auto-generate slug from name if slug is empty or matches old auto-slug
+    if (k === 'name' && (!x.slug || x.slug === slugify(x.name))) next.slug = slugify(v);
+    return next;
+  });
   const setVariant = (i, k, v) => setP(x => ({ ...x, variants: x.variants.map((va,idx) => idx===i?{...va,[k]:v}:va) }));
   const setNotesArr = (k, v) => setP(x => ({ ...x, [k]: v.split(',').map(s => s.trim()).filter(Boolean) }));
   const updateGalleryUrl = (i, url) => {
@@ -504,6 +510,15 @@ const ProductEditor = ({ product, collections, onClose, onSave }) => {
       g[i] = url;
       return { ...x, gallery: g.filter(Boolean) };
     });
+  };
+  const validateAndSave = () => {
+    if (!p.name?.trim()) return toast.error('Product name is required');
+    const slug = slugify(p.slug || p.name);
+    if (!slug) return toast.error('Slug could not be generated. Please enter a valid name.');
+    if (!p.images?.[0]) return toast.error('Main image URL is required');
+    if (!p.variants?.[0]?.sku) return toast.error('At least one variant with SKU is required');
+    if (!p.variants?.[0]?.price) return toast.error('Price is required');
+    onSave({ ...p, slug, gallery: (p.gallery || []).filter(Boolean) });
   };
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm overflow-y-auto p-6" onClick={onClose}>
@@ -613,7 +628,7 @@ const ProductEditor = ({ product, collections, onClose, onSave }) => {
         </div>
 
         <div className="flex gap-3 mt-8 pt-6 border-t border-white/10">
-          <button onClick={() => onSave(p)} className="bg-gold-500 text-black px-8 py-3 text-[10px] tracking-[0.3em] uppercase font-bold rounded">Save Product</button>
+          <button onClick={validateAndSave} className="bg-gold-500 text-black px-8 py-3 text-[10px] tracking-[0.3em] uppercase font-bold rounded">Save Product</button>
           <button onClick={onClose} className="border border-white/30 px-8 py-3 text-[10px] tracking-[0.3em] uppercase rounded hover:bg-white/10">Cancel</button>
         </div>
       </div>
