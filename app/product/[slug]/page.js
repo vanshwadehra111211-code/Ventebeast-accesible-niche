@@ -224,7 +224,7 @@ const ProductPage = () => {
           <div className="mt-6 grid grid-cols-3 gap-3 text-[10px] tracking-[0.2em] uppercase opacity-70">
             <div className="flex items-center gap-2"><Truck className="w-4 h-4" /> Free above ₹999</div>
             <div className="flex items-center gap-2"><Shield className="w-4 h-4" /> 100% Authentic</div>
-            <div className="flex items-center gap-2"><RotateCcw className="w-4 h-4" /> Easy Returns</div>
+            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4" /> COD Available</div>
           </div>
 
           {/* Frequently bought together */}

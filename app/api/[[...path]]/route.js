@@ -4,6 +4,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { getDb } from '@/lib/mongodb';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
 import { buildSeedDocs } from '@/lib/seed';
+import { sendOrderEmails } from '@/lib/email';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
@@ -363,6 +364,9 @@ async function handle(req, { params }) {
           { $inc: { 'variants.$.stock': -it.qty } }
         );
       }
+
+      // Send order emails (admin + customer) — fire & forget
+      sendOrderEmails(order).catch(e => console.error('email send error:', e));
       return ok({ order });
     }
     if (path.startsWith('orders/') && method === 'GET') {
@@ -432,6 +436,149 @@ async function handle(req, { params }) {
       const a = requireAdmin(user); if (a) return a;
       const users = await db.collection('users').find({}, { projection: { passwordHash: 0 } }).sort({ createdAt: -1 }).toArray();
       return ok({ users });
+    }
+
+    // ---------- COLLECTIONS CRUD ----------
+    if (path === 'collections' && method === 'GET') {
+      let cols = await db.collection('collections').find({}).sort({ order: 1 }).toArray();
+      if (cols.length === 0) {
+        // Seed defaults
+        const defaults = [
+          { name: 'Signature', slug: 'signature', description: 'Our hero compositions.', order: 1 },
+          { name: 'Sacred', slug: 'sacred', description: 'Incense, frankincense, myrrh.', order: 2 },
+          { name: 'Leathers', slug: 'leathers', description: 'Black leather and birch tar.', order: 3 },
+          { name: 'Florals Noir', slug: 'florals-noir', description: 'Roses at the witching hour.', order: 4 },
+          { name: 'Metallics', slug: 'metallics', description: 'Cold silver and iris suede.', order: 5 },
+          { name: 'Ambres', slug: 'ambres', description: 'Liquid amber and vanilla.', order: 6 },
+        ];
+        await db.collection('collections').insertMany(defaults.map(c => ({ _id: uuid(), ...c, createdAt: new Date() })));
+        cols = await db.collection('collections').find({}).sort({ order: 1 }).toArray();
+      }
+      return ok({ collections: cols });
+    }
+    if (path === 'admin/collections' && method === 'POST') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const body = await req.json();
+      const doc = { _id: uuid(), ...body, createdAt: new Date() };
+      await db.collection('collections').insertOne(doc);
+      return ok({ collection: doc });
+    }
+    if (path.startsWith('admin/collections/') && method === 'PUT') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const id = path.split('/')[2];
+      const body = await req.json();
+      delete body._id;
+      await db.collection('collections').updateOne({ _id: id }, { $set: body });
+      return ok({ ok: true });
+    }
+    if (path.startsWith('admin/collections/') && method === 'DELETE') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const id = path.split('/')[2];
+      await db.collection('collections').deleteOne({ _id: id });
+      return ok({ ok: true });
+    }
+
+    // ---------- ADMIN REVIEWS MODERATION ----------
+    if (path === 'admin/reviews' && method === 'GET') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const reviews = await db.collection('reviews').find({}).sort({ createdAt: -1 }).toArray();
+      // Join product names
+      const productIds = [...new Set(reviews.map(r => r.productId))];
+      const prods = await db.collection('products').find({ _id: { $in: productIds } }).toArray();
+      const map = Object.fromEntries(prods.map(p => [p._id, { name: p.name, slug: p.slug, image: p.images?.[0] }]));
+      const enriched = reviews.map(r => ({ ...r, product: map[r.productId] }));
+      return ok({ reviews: enriched });
+    }
+    if (path.startsWith('admin/reviews/') && method === 'PUT') {
+      // Admin can hide / approve
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const id = path.split('/')[2];
+      const body = await req.json();
+      await db.collection('reviews').updateOne({ _id: id }, { $set: body });
+      return ok({ ok: true });
+    }
+    if (path.startsWith('admin/reviews/') && method === 'DELETE') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const id = path.split('/')[2];
+      const review = await db.collection('reviews').findOne({ _id: id });
+      await db.collection('reviews').deleteOne({ _id: id });
+      // recompute product rating
+      if (review) {
+        const agg = await db.collection('reviews').aggregate([
+          { $match: { productId: review.productId } },
+          { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
+        ]).toArray();
+        await db.collection('products').updateOne(
+          { _id: review.productId },
+          { $set: { rating: agg[0] ? Math.round(agg[0].avg * 10) / 10 : 0, reviewCount: agg[0]?.count || 0 } }
+        );
+      }
+      return ok({ ok: true });
+    }
+    if (path === 'admin/reviews' && method === 'POST') {
+      // Admin can write a review on behalf of a customer (e.g., from offline feedback)
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const { productId, userName, rating, title, body } = await req.json();
+      const doc = {
+        _id: uuid(), productId, userId: 'admin', userName: userName || 'Verified Buyer',
+        rating: Math.max(1, Math.min(5, parseInt(rating))), title, body,
+        verified: true, addedByAdmin: true, createdAt: new Date(),
+      };
+      await db.collection('reviews').insertOne(doc);
+      const agg = await db.collection('reviews').aggregate([
+        { $match: { productId } },
+        { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
+      ]).toArray();
+      if (agg[0]) {
+        await db.collection('products').updateOne(
+          { _id: productId },
+          { $set: { rating: Math.round(agg[0].avg * 10) / 10, reviewCount: agg[0].count } }
+        );
+      }
+      return ok({ review: doc });
+    }
+
+    // ---------- SITE SETTINGS (theme, logo, banners) ----------
+    if (path === 'settings' && method === 'GET') {
+      let s = await db.collection('settings').findOne({ _id: 'site' });
+      if (!s) {
+        s = {
+          _id: 'site',
+          theme: 'dark', // 'dark' | 'navy'
+          logoUrl: 'https://cdn.corenexis.com/f/c8lL883bHrO.png',
+          siteName: 'VENTEBEAST',
+          tagline: 'Accessibilis Niche Perfumery',
+          promoBanner: 'USE WELCOME10 FOR 10% OFF FIRST ORDER · FREE SHIPPING ABOVE ₹999',
+        };
+        await db.collection('settings').insertOne(s);
+      }
+      return ok({ settings: s });
+    }
+    if (path === 'admin/settings' && method === 'PUT') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const body = await req.json();
+      delete body._id;
+      await db.collection('settings').updateOne({ _id: 'site' }, { $set: body }, { upsert: true });
+      const s = await db.collection('settings').findOne({ _id: 'site' });
+      return ok({ settings: s });
+    }
+
+    // ---------- TEST EMAIL (admin only) ----------
+    if (path === 'admin/test-email' && method === 'POST') {
+      const user = await currentUser(req);
+      const a = requireAdmin(user); if (a) return a;
+      const last = await db.collection('orders').findOne({}, { sort: { createdAt: -1 } });
+      if (!last) return err('No orders to test with');
+      const result = await sendOrderEmails(last);
+      return ok({ result });
     }
 
     // Health

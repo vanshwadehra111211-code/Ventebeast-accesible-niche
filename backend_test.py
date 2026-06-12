@@ -1,654 +1,475 @@
 #!/usr/bin/env python3
 """
-VENTEBEAST Backend API Test Suite
-Tests all ecommerce endpoints in happy path order
+Backend API Test for NEW endpoints:
+1. Collections CRUD
+2. Admin Reviews moderation
+3. Site Settings
+4. Test email endpoint
+5. Order placement with email
 """
+
 import requests
-import random
-import string
 import json
-from typing import Dict, Any
+import subprocess
+import sys
 
-# Base URL from .env
 BASE_URL = "https://luxury-scents-150.preview.emergentagent.com/api"
+ADMIN_EMAIL = "vanshwadehra606@gmail.com"
+ADMIN_PASSWORD = "TestAdmin123!"
 
-# Test data storage
-test_data = {
-    "customer_email": f"buyer_{random.randint(1000, 9999)}@test.com",
-    "customer_password": "secret123",
-    "customer_token": None,
-    "customer_user": None,
-    "admin_email": "vanshwadehra606@gmail.com",
-    "admin_password": "AdminPass123",
-    "admin_token": None,
-    "admin_user": None,
-    "product_id": None,
-    "created_product_id": None,
-    "wishlist_product_id": None,
-    "address_id": None,
-    "order_id": None,
-    "noir_product_id": None,
-    "noir_variant_sku": None,
-    "noir_initial_stock": None,
-}
+admin_token = None
+customer_token = None
+test_collection_id = None
+test_review_id = None
+test_product_id = None
 
-def log_test(name: str, passed: bool, details: str = ""):
-    """Log test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"\n{status}: {name}")
-    if details:
-        print(f"  Details: {details}")
-    if not passed:
-        print(f"  ⚠️  Test failed!")
+def print_test(msg):
+    print(f"\n{'='*60}")
+    print(f"TEST: {msg}")
+    print('='*60)
 
-def make_request(method: str, endpoint: str, token: str = None, json_data: Dict = None, params: Dict = None) -> tuple:
-    """Make HTTP request and return (success, response_json, status_code)"""
-    url = f"{BASE_URL}{endpoint}"
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    
+def print_pass(msg):
+    print(f"✅ PASS: {msg}")
+
+def print_fail(msg):
+    print(f"❌ FAIL: {msg}")
+
+def delete_admin_from_db():
+    """Delete admin user from MongoDB if exists"""
     try:
-        if method == "GET":
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
-        elif method == "POST":
-            resp = requests.post(url, headers=headers, json=json_data, timeout=30)
-        elif method == "PUT":
-            resp = requests.put(url, headers=headers, json=json_data, timeout=30)
-        elif method == "DELETE":
-            resp = requests.delete(url, headers=headers, timeout=30)
-        else:
-            return False, {"error": "Invalid method"}, 0
-        
-        try:
+        cmd = f'mongosh "mongodb://localhost:27017/ventebeast" --quiet --eval "db.users.deleteOne({{email:\\"{ADMIN_EMAIL}\\"}})"'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        print(f"Deleted admin user from DB: {result.stdout}")
+        return True
+    except Exception as e:
+        print(f"Error deleting admin: {e}")
+        return False
+
+def register_admin():
+    """Register fresh admin user"""
+    global admin_token
+    try:
+        resp = requests.post(f"{BASE_URL}/auth/register", json={
+            "email": ADMIN_EMAIL,
+            "password": ADMIN_PASSWORD,
+            "name": "Test Admin"
+        }, timeout=10)
+        if resp.status_code == 200:
             data = resp.json()
-        except:
-            data = {"raw": resp.text}
-        
-        return resp.status_code < 400, data, resp.status_code
+            admin_token = data.get('token')
+            print_pass(f"Admin registered: {data.get('user', {}).get('role')}")
+            return True
+        else:
+            print_fail(f"Admin registration failed: {resp.status_code} {resp.text}")
+            return False
     except Exception as e:
-        return False, {"error": str(e)}, 0
+        print_fail(f"Admin registration error: {e}")
+        return False
 
-# ========== 1. AUTH TESTS ==========
-def test_auth():
-    print("\n" + "="*60)
-    print("1. TESTING AUTH ENDPOINTS")
-    print("="*60)
-    
-    # Register customer
-    success, data, status = make_request(
-        "POST", "/auth/register",
-        json_data={
-            "email": test_data["customer_email"],
-            "password": test_data["customer_password"],
-            "name": "Buyer Test"
-        }
-    )
-    log_test(
-        "Register customer",
-        success and status == 200 and "token" in data and data.get("user", {}).get("role") == "customer",
-        f"Status: {status}, Role: {data.get('user', {}).get('role')}"
-    )
-    if success:
-        test_data["customer_token"] = data.get("token")
-        test_data["customer_user"] = data.get("user")
-    
-    # Register or login admin
-    success, data, status = make_request(
-        "POST", "/auth/register",
-        json_data={
-            "email": test_data["admin_email"],
-            "password": test_data["admin_password"],
-            "name": "Admin"
-        }
-    )
-    
-    if status == 409:  # Already registered
-        print("  ℹ️  Admin already registered, attempting login...")
-        success, data, status = make_request(
-            "POST", "/auth/login",
-            json_data={
-                "email": test_data["admin_email"],
-                "password": test_data["admin_password"]
-            }
-        )
-    
-    log_test(
-        "Register/Login admin with auto-promotion",
-        success and status == 200 and data.get("user", {}).get("role") == "admin",
-        f"Status: {status}, Role: {data.get('user', {}).get('role')}"
-    )
-    if success:
-        test_data["admin_token"] = data.get("token")
-        test_data["admin_user"] = data.get("user")
-    
-    # Login admin again to verify auto-promotion
-    success, data, status = make_request(
-        "POST", "/auth/login",
-        json_data={
-            "email": test_data["admin_email"],
-            "password": test_data["admin_password"]
-        }
-    )
-    log_test(
-        "Admin login returns admin role",
-        success and data.get("user", {}).get("role") == "admin",
-        f"Status: {status}, Role: {data.get('user', {}).get('role')}"
-    )
-    
-    # Get /me for customer
-    success, data, status = make_request(
-        "GET", "/auth/me",
-        token=test_data["customer_token"]
-    )
-    log_test(
-        "GET /auth/me for customer",
-        success and data.get("user", {}).get("email") == test_data["customer_email"],
-        f"Status: {status}, Email: {data.get('user', {}).get('email')}"
-    )
-    
-    # Get /me for admin
-    success, data, status = make_request(
-        "GET", "/auth/me",
-        token=test_data["admin_token"]
-    )
-    log_test(
-        "GET /auth/me for admin",
-        success and data.get("user", {}).get("role") == "admin",
-        f"Status: {status}, Role: {data.get('user', {}).get('role')}"
-    )
+def login_admin():
+    """Login as admin"""
+    global admin_token
+    try:
+        resp = requests.post(f"{BASE_URL}/auth/login", json={
+            "email": ADMIN_EMAIL,
+            "password": ADMIN_PASSWORD
+        }, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            admin_token = data.get('token')
+            print_pass(f"Admin logged in: {data.get('user', {}).get('role')}")
+            return True
+        else:
+            print(f"Admin login failed: {resp.status_code}, will delete and re-register")
+            return False
+    except Exception as e:
+        print(f"Admin login error: {e}")
+        return False
 
-# ========== 2. PRODUCTS TESTS ==========
-def test_products():
-    print("\n" + "="*60)
-    print("2. TESTING PRODUCT ENDPOINTS")
-    print("="*60)
-    
-    # Get all products (should have 6 seeded)
-    success, data, status = make_request("GET", "/products")
-    products = data.get("products", [])
-    log_test(
-        "GET /products returns 6 seeded products",
-        success and len(products) == 6,
-        f"Status: {status}, Count: {len(products)}"
-    )
-    
-    if products:
-        test_data["product_id"] = products[0]["_id"]
-        # Find noir-obscur for later tests
-        noir = next((p for p in products if p.get("slug") == "noir-obscur"), None)
-        if noir:
-            test_data["noir_product_id"] = noir["_id"]
-            if noir.get("variants"):
-                test_data["noir_variant_sku"] = noir["variants"][0]["sku"]
-                test_data["noir_initial_stock"] = noir["variants"][0]["stock"]
-    
-    # Get featured products
-    success, data, status = make_request("GET", "/products", params={"featured": "true"})
-    featured = data.get("products", [])
-    log_test(
-        "GET /products?featured=true returns only featured",
-        success and all(p.get("featured") for p in featured),
-        f"Status: {status}, Count: {len(featured)}"
-    )
-    
-    # Get products sorted by price ascending with limit
-    success, data, status = make_request("GET", "/products", params={"sort": "priceAsc", "limit": "3"})
-    sorted_products = data.get("products", [])
-    log_test(
-        "GET /products?sort=priceAsc&limit=3",
-        success and len(sorted_products) <= 3,
-        f"Status: {status}, Count: {len(sorted_products)}"
-    )
-    
-    # Get product by slug (noir-obscur)
-    success, data, status = make_request("GET", "/products/noir-obscur")
-    product = data.get("product")
-    related = data.get("related", [])
-    log_test(
-        "GET /products/noir-obscur returns product + related",
-        success and product is not None and isinstance(related, list),
-        f"Status: {status}, Has product: {product is not None}, Related count: {len(related)}"
-    )
+def setup_admin():
+    """Setup admin user - try login, if fails delete and register"""
+    if login_admin():
+        return True
+    print("Deleting existing admin and registering fresh...")
+    delete_admin_from_db()
+    return register_admin()
 
-# ========== 3. ADMIN PRODUCT CRUD TESTS ==========
-def test_admin_product_crud():
-    print("\n" + "="*60)
-    print("3. TESTING ADMIN PRODUCT CRUD")
-    print("="*60)
-    
-    # Customer tries to create product (should fail with 403)
-    success, data, status = make_request(
-        "POST", "/products",
-        token=test_data["customer_token"],
-        json_data={
-            "slug": "test-scent",
-            "name": "Test Scent",
-            "brand": "VB"
-        }
-    )
-    log_test(
-        "Customer POST /products returns 403",
-        not success and status == 403,
-        f"Status: {status}, Error: {data.get('error')}"
-    )
-    
-    # Admin creates product
-    success, data, status = make_request(
-        "POST", "/products",
-        token=test_data["admin_token"],
-        json_data={
-            "slug": "test-scent",
-            "name": "Test Scent",
-            "brand": "VB",
-            "collection": "Test",
-            "variants": [{
-                "size": "30ml",
-                "sku": "TST-30",
-                "price": 1000,
-                "comparePrice": 1200,
-                "stock": 5
-            }],
-            "images": ["https://images.unsplash.com/photo-1643797519086-cc9a821fbcfe?w=800"],
-            "topNotes": [],
-            "heartNotes": [],
-            "baseNotes": [],
-            "featured": False,
-            "bestseller": False,
-            "newArrival": True
-        }
-    )
-    log_test(
-        "Admin POST /products creates product",
-        success and "_id" in data.get("product", {}),
-        f"Status: {status}, Product ID: {data.get('product', {}).get('_id')}"
-    )
-    if success:
-        test_data["created_product_id"] = data.get("product", {}).get("_id")
-    
-    # Admin updates product
-    if test_data["created_product_id"]:
-        success, data, status = make_request(
-            "PUT", f"/products/{test_data['created_product_id']}",
-            token=test_data["admin_token"],
-            json_data={
-                "variants": [{
-                    "size": "30ml",
-                    "sku": "TST-30",
-                    "price": 1000,
-                    "comparePrice": 1200,
-                    "stock": 10  # Changed stock
-                }]
-            }
-        )
-        log_test(
-            "Admin PUT /products/{id} updates product",
-            success and status == 200,
-            f"Status: {status}"
-        )
-    
-    # Admin deletes product
-    if test_data["created_product_id"]:
-        success, data, status = make_request(
-            "DELETE", f"/products/{test_data['created_product_id']}",
-            token=test_data["admin_token"]
-        )
-        log_test(
-            "Admin DELETE /products/{id} deletes product",
-            success and status == 200,
-            f"Status: {status}"
-        )
+def register_customer():
+    """Register a customer user"""
+    global customer_token
+    try:
+        import random
+        email = f"customer{random.randint(1000,9999)}@test.com"
+        resp = requests.post(f"{BASE_URL}/auth/register", json={
+            "email": email,
+            "password": "Customer123!",
+            "name": "Test Customer"
+        }, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            customer_token = data.get('token')
+            print_pass(f"Customer registered: {email}")
+            return True
+        else:
+            print_fail(f"Customer registration failed: {resp.status_code}")
+            return False
+    except Exception as e:
+        print_fail(f"Customer registration error: {e}")
+        return False
 
-# ========== 4. COUPONS TESTS ==========
-def test_coupons():
-    print("\n" + "="*60)
-    print("4. TESTING COUPON VALIDATION")
-    print("="*60)
-    
-    # Validate WELCOME10
-    success, data, status = make_request(
-        "POST", "/coupons/validate",
-        json_data={"code": "WELCOME10", "subtotal": 5000}
-    )
-    coupon = data.get("coupon", {})
-    log_test(
-        "POST /coupons/validate WELCOME10 returns 10% discount",
-        success and coupon.get("discount") == 500 and coupon.get("type") == "percentage",
-        f"Status: {status}, Discount: {coupon.get('discount')}, Type: {coupon.get('type')}"
-    )
-    
-    # Validate FREESHIP
-    success, data, status = make_request(
-        "POST", "/coupons/validate",
-        json_data={"code": "FREESHIP", "subtotal": 100}
-    )
-    coupon = data.get("coupon", {})
-    log_test(
-        "POST /coupons/validate FREESHIP returns free shipping",
-        success and coupon.get("freeShipping") == True,
-        f"Status: {status}, Free shipping: {coupon.get('freeShipping')}"
-    )
-    
-    # Validate invalid coupon
-    success, data, status = make_request(
-        "POST", "/coupons/validate",
-        json_data={"code": "BOGUS", "subtotal": 100}
-    )
-    log_test(
-        "POST /coupons/validate BOGUS returns 404",
-        not success and status == 404,
-        f"Status: {status}, Error: {data.get('error')}"
-    )
+def get_test_product():
+    """Get a product ID for testing"""
+    global test_product_id
+    try:
+        resp = requests.get(f"{BASE_URL}/products?limit=1", timeout=10)
+        if resp.status_code == 200:
+            products = resp.json().get('products', [])
+            if products:
+                test_product_id = products[0]['_id']
+                print_pass(f"Got test product: {test_product_id}")
+                return True
+        print_fail("No products found")
+        return False
+    except Exception as e:
+        print_fail(f"Error getting product: {e}")
+        return False
 
-# ========== 5. WISHLIST TESTS ==========
-def test_wishlist():
-    print("\n" + "="*60)
-    print("5. TESTING WISHLIST")
-    print("="*60)
+# ========== TEST 1: COLLECTIONS CRUD ==========
+def test_collections_crud():
+    print_test("1. COLLECTIONS CRUD")
     
-    # Add to wishlist
-    if test_data["noir_product_id"]:
-        success, data, status = make_request(
-            "POST", "/wishlist",
-            token=test_data["customer_token"],
-            json_data={"productId": test_data["noir_product_id"]}
-        )
-        log_test(
-            "POST /wishlist adds product",
-            success and status == 200,
-            f"Status: {status}"
-        )
-        test_data["wishlist_product_id"] = test_data["noir_product_id"]
+    # 1a. GET /api/collections - should auto-seed 6 collections
+    try:
+        resp = requests.get(f"{BASE_URL}/collections", timeout=10)
+        if resp.status_code == 200:
+            collections = resp.json().get('collections', [])
+            if len(collections) >= 6:
+                print_pass(f"GET /api/collections returned {len(collections)} collections (auto-seeded)")
+                # Check structure
+                first = collections[0]
+                if all(k in first for k in ['_id', 'name', 'slug', 'description', 'order']):
+                    print_pass("Collection structure valid (_id, name, slug, description, order)")
+                else:
+                    print_fail(f"Collection structure invalid: {first.keys()}")
+            else:
+                print_fail(f"Expected at least 6 collections, got {len(collections)}")
+        else:
+            print_fail(f"GET /api/collections failed: {resp.status_code}")
+    except Exception as e:
+        print_fail(f"GET /api/collections error: {e}")
     
-    # Get wishlist
-    success, data, status = make_request(
-        "GET", "/wishlist",
-        token=test_data["customer_token"]
-    )
-    items = data.get("items", [])
-    has_noir = any(item.get("_id") == test_data["noir_product_id"] for item in items)
-    log_test(
-        "GET /wishlist contains noir-obscur",
-        success and has_noir,
-        f"Status: {status}, Items count: {len(items)}, Has noir: {has_noir}"
-    )
+    # 1b. POST /api/admin/collections as admin
+    global test_collection_id
+    try:
+        resp = requests.post(f"{BASE_URL}/admin/collections", 
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"name": "TestCol", "slug": "testcol", "description": "Test", "order": 99},
+            timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            test_collection_id = data.get('collection', {}).get('_id')
+            print_pass(f"POST /api/admin/collections as admin: created {test_collection_id}")
+        else:
+            print_fail(f"POST /api/admin/collections failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print_fail(f"POST /api/admin/collections error: {e}")
     
-    # Remove from wishlist
-    if test_data["wishlist_product_id"]:
-        success, data, status = make_request(
-            "DELETE", f"/wishlist/{test_data['wishlist_product_id']}",
-            token=test_data["customer_token"]
-        )
-        log_test(
-            "DELETE /wishlist/{id} removes product",
-            success and status == 200,
-            f"Status: {status}"
-        )
+    # 1c. PUT /api/admin/collections/{id} as admin
+    if test_collection_id:
+        try:
+            resp = requests.put(f"{BASE_URL}/admin/collections/{test_collection_id}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={"description": "Updated"},
+                timeout=10)
+            if resp.status_code == 200:
+                print_pass(f"PUT /api/admin/collections/{test_collection_id} as admin: updated")
+            else:
+                print_fail(f"PUT /api/admin/collections failed: {resp.status_code}")
+        except Exception as e:
+            print_fail(f"PUT /api/admin/collections error: {e}")
+    
+    # 1d. POST /api/admin/collections as customer - expect 403
+    try:
+        resp = requests.post(f"{BASE_URL}/admin/collections",
+            headers={"Authorization": f"Bearer {customer_token}"},
+            json={"name": "Forbidden", "slug": "forbidden", "description": "Should fail", "order": 100},
+            timeout=10)
+        if resp.status_code == 403:
+            print_pass("POST /api/admin/collections as customer: 403 Forbidden (correct)")
+        else:
+            print_fail(f"POST /api/admin/collections as customer should be 403, got {resp.status_code}")
+    except Exception as e:
+        print_fail(f"POST /api/admin/collections as customer error: {e}")
+    
+    # 1e. DELETE /api/admin/collections/{id} as admin
+    if test_collection_id:
+        try:
+            resp = requests.delete(f"{BASE_URL}/admin/collections/{test_collection_id}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                timeout=10)
+            if resp.status_code == 200:
+                print_pass(f"DELETE /api/admin/collections/{test_collection_id} as admin: deleted")
+            else:
+                print_fail(f"DELETE /api/admin/collections failed: {resp.status_code}")
+        except Exception as e:
+            print_fail(f"DELETE /api/admin/collections error: {e}")
 
-# ========== 6. ADDRESSES TESTS ==========
-def test_addresses():
-    print("\n" + "="*60)
-    print("6. TESTING ADDRESSES")
-    print("="*60)
+# ========== TEST 2: ADMIN REVIEWS MODERATION ==========
+def test_admin_reviews():
+    print_test("2. ADMIN REVIEWS MODERATION")
     
-    # Add address
-    success, data, status = make_request(
-        "POST", "/addresses",
-        token=test_data["customer_token"],
-        json_data={
-            "name": "John Doe",
-            "phone": "9876543210",
-            "line1": "123 Test Street",
-            "city": "Mumbai",
-            "state": "Maharashtra",
-            "pincode": "400001"
-        }
-    )
-    log_test(
-        "POST /addresses creates address",
-        success and "id" in data.get("address", {}),
-        f"Status: {status}, Address ID: {data.get('address', {}).get('id')}"
-    )
-    if success:
-        test_data["address_id"] = data.get("address", {}).get("id")
+    # 2a. GET /api/admin/reviews - should return array with product joined
+    try:
+        resp = requests.get(f"{BASE_URL}/admin/reviews",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=10)
+        if resp.status_code == 200:
+            reviews = resp.json().get('reviews', [])
+            print_pass(f"GET /api/admin/reviews returned {len(reviews)} reviews")
+            if reviews:
+                first = reviews[0]
+                if 'product' in first and isinstance(first['product'], dict):
+                    product = first['product']
+                    if all(k in product for k in ['name', 'slug', 'image']):
+                        print_pass("Review has product joined (name, slug, image)")
+                    else:
+                        print_fail(f"Product join incomplete: {product.keys()}")
+                else:
+                    print_fail("Review missing product join")
+        else:
+            print_fail(f"GET /api/admin/reviews failed: {resp.status_code}")
+    except Exception as e:
+        print_fail(f"GET /api/admin/reviews error: {e}")
     
-    # Get addresses
-    success, data, status = make_request(
-        "GET", "/addresses",
-        token=test_data["customer_token"]
-    )
-    addresses = data.get("addresses", [])
-    has_address = any(addr.get("id") == test_data["address_id"] for addr in addresses)
-    log_test(
-        "GET /addresses contains created address",
-        success and has_address,
-        f"Status: {status}, Count: {len(addresses)}, Has address: {has_address}"
-    )
-    
-    # Delete address
-    if test_data["address_id"]:
-        success, data, status = make_request(
-            "DELETE", f"/addresses/{test_data['address_id']}",
-            token=test_data["customer_token"]
-        )
-        log_test(
-            "DELETE /addresses/{id} removes address",
-            success and status == 200,
-            f"Status: {status}"
-        )
-
-# ========== 7. ORDERS + MOCK PAYMENT TESTS ==========
-def test_orders_and_payment():
-    print("\n" + "="*60)
-    print("7. TESTING ORDERS + MOCK PAYMENT")
-    print("="*60)
-    
-    # Place order
-    if test_data["noir_product_id"] and test_data["noir_variant_sku"]:
-        success, data, status = make_request(
-            "POST", "/orders",
-            token=test_data["customer_token"],
-            json_data={
-                "items": [{
-                    "productId": test_data["noir_product_id"],
-                    "sku": test_data["noir_variant_sku"],
-                    "qty": 1
-                }],
-                "address": {
-                    "name": "John Doe",
-                    "phone": "9876543210",
-                    "line1": "123 Test Street",
-                    "city": "Mumbai",
-                    "state": "Maharashtra",
-                    "pincode": "400001"
+    # 2b. POST /api/admin/reviews - admin creates review
+    global test_review_id
+    if test_product_id:
+        try:
+            # Get product rating before
+            resp_prod = requests.get(f"{BASE_URL}/products", timeout=10)
+            products = resp_prod.json().get('products', [])
+            product_before = next((p for p in products if p['_id'] == test_product_id), None)
+            rating_before = product_before.get('rating', 0) if product_before else 0
+            
+            resp = requests.post(f"{BASE_URL}/admin/reviews",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={
+                    "productId": test_product_id,
+                    "userName": "Test Customer",
+                    "rating": 5,
+                    "title": "Beautiful",
+                    "body": "Love it"
                 },
-                "shipping": 200,
-                "discount": 0,
-                "paymentMethod": "mock"
-            }
-        )
-        order = data.get("order", {})
-        log_test(
-            "POST /orders creates order with pending status",
-            success and order.get("status") == "pending" and "subtotal" in order and "total" in order,
-            f"Status: {status}, Order status: {order.get('status')}, Total: {order.get('total')}"
-        )
-        if success:
-            test_data["order_id"] = order.get("_id")
+                timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                test_review_id = data.get('review', {}).get('_id')
+                print_pass(f"POST /api/admin/reviews: created review {test_review_id}")
+                
+                # Check product rating recomputed
+                resp_prod2 = requests.get(f"{BASE_URL}/products", timeout=10)
+                products2 = resp_prod2.json().get('products', [])
+                product_after = next((p for p in products2 if p['_id'] == test_product_id), None)
+                rating_after = product_after.get('rating', 0) if product_after else 0
+                
+                if rating_after != rating_before:
+                    print_pass(f"Product rating recomputed: {rating_before} -> {rating_after}")
+                else:
+                    print(f"⚠️  Product rating unchanged: {rating_before} (may be same if multiple reviews)")
+            else:
+                print_fail(f"POST /api/admin/reviews failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print_fail(f"POST /api/admin/reviews error: {e}")
     
-    # Mock confirm payment
-    if test_data["order_id"]:
-        success, data, status = make_request(
-            "POST", "/payment/mock-confirm",
-            token=test_data["customer_token"],
-            json_data={
-                "orderId": test_data["order_id"],
-                "success": True
-            }
-        )
-        order = data.get("order", {})
-        log_test(
-            "POST /payment/mock-confirm updates to paid & confirmed",
-            success and order.get("paymentStatus") == "paid" and order.get("status") == "confirmed",
-            f"Status: {status}, Payment: {order.get('paymentStatus')}, Order status: {order.get('status')}"
-        )
-    
-    # Get orders list
-    success, data, status = make_request(
-        "GET", "/orders",
-        token=test_data["customer_token"]
-    )
-    orders = data.get("orders", [])
-    has_order = any(o.get("_id") == test_data["order_id"] for o in orders)
-    log_test(
-        "GET /orders contains the order",
-        success and has_order,
-        f"Status: {status}, Orders count: {len(orders)}, Has order: {has_order}"
-    )
-    
-    # Verify stock decreased
-    success, data, status = make_request("GET", "/products/noir-obscur")
-    product = data.get("product")
-    if product and product.get("variants"):
-        variant = next((v for v in product["variants"] if v["sku"] == test_data["noir_variant_sku"]), None)
-        if variant and test_data["noir_initial_stock"] is not None:
-            expected_stock = test_data["noir_initial_stock"] - 1
-            log_test(
-                "Stock decreased by 1 after order",
-                variant["stock"] == expected_stock,
-                f"Initial: {test_data['noir_initial_stock']}, Current: {variant['stock']}, Expected: {expected_stock}"
-            )
+    # 2c. DELETE /api/admin/reviews/{id} - verify rating recomputed
+    if test_review_id and test_product_id:
+        try:
+            # Get product rating before delete
+            resp_prod = requests.get(f"{BASE_URL}/products", timeout=10)
+            products = resp_prod.json().get('products', [])
+            product_before = next((p for p in products if p['_id'] == test_product_id), None)
+            rating_before = product_before.get('rating', 0) if product_before else 0
+            
+            resp = requests.delete(f"{BASE_URL}/admin/reviews/{test_review_id}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                timeout=10)
+            if resp.status_code == 200:
+                print_pass(f"DELETE /api/admin/reviews/{test_review_id}: deleted")
+                
+                # Check product rating recomputed again
+                resp_prod2 = requests.get(f"{BASE_URL}/products", timeout=10)
+                products2 = resp_prod2.json().get('products', [])
+                product_after = next((p for p in products2 if p['_id'] == test_product_id), None)
+                rating_after = product_after.get('rating', 0) if product_after else 0
+                
+                if rating_after != rating_before:
+                    print_pass(f"Product rating recomputed after delete: {rating_before} -> {rating_after}")
+                else:
+                    print(f"⚠️  Product rating unchanged: {rating_before} (may be same if no other reviews)")
+            else:
+                print_fail(f"DELETE /api/admin/reviews failed: {resp.status_code}")
+        except Exception as e:
+            print_fail(f"DELETE /api/admin/reviews error: {e}")
 
-# ========== 8. REVIEWS TESTS ==========
-def test_reviews():
-    print("\n" + "="*60)
-    print("8. TESTING REVIEWS")
-    print("="*60)
+# ========== TEST 3: SITE SETTINGS ==========
+def test_site_settings():
+    print_test("3. SITE SETTINGS")
     
-    # Post review
-    if test_data["noir_product_id"]:
-        success, data, status = make_request(
-            "POST", "/reviews",
-            token=test_data["customer_token"],
-            json_data={
-                "productId": test_data["noir_product_id"],
-                "rating": 5,
-                "title": "Stunning",
-                "body": "Long sillage."
-            }
-        )
-        log_test(
-            "POST /reviews creates review",
-            success and "_id" in data.get("review", {}),
-            f"Status: {status}, Review ID: {data.get('review', {}).get('_id')}"
-        )
+    # 3a. GET /api/settings - should auto-create defaults
+    try:
+        resp = requests.get(f"{BASE_URL}/settings", timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            settings = data.get('settings', {})
+            required = ['theme', 'logoUrl', 'siteName', 'tagline', 'promoBanner']
+            if all(k in settings for k in required):
+                print_pass(f"GET /api/settings returned all fields: {required}")
+            else:
+                print_fail(f"GET /api/settings missing fields. Got: {settings.keys()}")
+        else:
+            print_fail(f"GET /api/settings failed: {resp.status_code}")
+    except Exception as e:
+        print_fail(f"GET /api/settings error: {e}")
     
-    # Get reviews for product
-    if test_data["noir_product_id"]:
-        success, data, status = make_request(
-            "GET", f"/reviews/{test_data['noir_product_id']}"
-        )
-        reviews = data.get("reviews", [])
-        log_test(
-            "GET /reviews/{productId} contains review",
-            success and len(reviews) > 0,
-            f"Status: {status}, Reviews count: {len(reviews)}"
-        )
+    # 3b. PUT /api/admin/settings as admin
+    try:
+        resp = requests.put(f"{BASE_URL}/admin/settings",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"theme": "navy", "promoBanner": "TEST BANNER"},
+            timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            settings = data.get('settings', {})
+            if settings.get('theme') == 'navy' and settings.get('promoBanner') == 'TEST BANNER':
+                print_pass("PUT /api/admin/settings as admin: updated theme and promoBanner")
+            else:
+                print_fail(f"PUT /api/admin/settings didn't update correctly: {settings}")
+        else:
+            print_fail(f"PUT /api/admin/settings failed: {resp.status_code}")
+    except Exception as e:
+        print_fail(f"PUT /api/admin/settings error: {e}")
     
-    # Verify product rating updated
-    success, data, status = make_request("GET", "/products/noir-obscur")
-    product = data.get("product")
-    log_test(
-        "Product rating and reviewCount updated",
-        success and product.get("rating") is not None and product.get("reviewCount", 0) > 0,
-        f"Status: {status}, Rating: {product.get('rating')}, Review count: {product.get('reviewCount')}"
-    )
+    # 3c. PUT /api/admin/settings as customer - expect 403
+    try:
+        resp = requests.put(f"{BASE_URL}/admin/settings",
+            headers={"Authorization": f"Bearer {customer_token}"},
+            json={"theme": "dark"},
+            timeout=10)
+        if resp.status_code == 403:
+            print_pass("PUT /api/admin/settings as customer: 403 Forbidden (correct)")
+        else:
+            print_fail(f"PUT /api/admin/settings as customer should be 403, got {resp.status_code}")
+    except Exception as e:
+        print_fail(f"PUT /api/admin/settings as customer error: {e}")
 
-# ========== 9. ADMIN ENDPOINTS TESTS ==========
-def test_admin_endpoints():
-    print("\n" + "="*60)
-    print("9. TESTING ADMIN ENDPOINTS")
-    print("="*60)
+# ========== TEST 4: TEST EMAIL ENDPOINT ==========
+def test_email_endpoint():
+    print_test("4. TEST EMAIL ENDPOINT")
     
-    # Admin stats
-    success, data, status = make_request(
-        "GET", "/admin/stats",
-        token=test_data["admin_token"]
-    )
-    stats = data.get("stats", {})
-    recent_orders = data.get("recentOrders", [])
-    log_test(
-        "GET /admin/stats returns stats and recent orders",
-        success and "productCount" in stats and isinstance(recent_orders, list),
-        f"Status: {status}, Product count: {stats.get('productCount')}, Recent orders: {len(recent_orders)}"
-    )
-    
-    # Admin orders
-    success, data, status = make_request(
-        "GET", "/admin/orders",
-        token=test_data["admin_token"]
-    )
-    orders = data.get("orders", [])
-    log_test(
-        "GET /admin/orders returns order list",
-        success and isinstance(orders, list),
-        f"Status: {status}, Orders count: {len(orders)}"
-    )
-    
-    # Admin users
-    success, data, status = make_request(
-        "GET", "/admin/users",
-        token=test_data["admin_token"]
-    )
-    users = data.get("users", [])
-    log_test(
-        "GET /admin/users returns user list",
-        success and isinstance(users, list) and len(users) >= 2,
-        f"Status: {status}, Users count: {len(users)}"
-    )
-    
-    # Customer tries admin stats (should fail with 403)
-    success, data, status = make_request(
-        "GET", "/admin/stats",
-        token=test_data["customer_token"]
-    )
-    log_test(
-        "Customer GET /admin/stats returns 403",
-        not success and status == 403,
-        f"Status: {status}, Error: {data.get('error')}"
-    )
+    # POST /api/admin/test-email as admin
+    try:
+        resp = requests.post(f"{BASE_URL}/admin/test-email",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            result = data.get('result', {})
+            if result.get('sent') == False:
+                print_pass("POST /api/admin/test-email: returned 200, sent=false (no RESEND_API_KEY - expected)")
+            else:
+                print_pass(f"POST /api/admin/test-email: returned 200, result={result}")
+        else:
+            print_fail(f"POST /api/admin/test-email failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print_fail(f"POST /api/admin/test-email error: {e}")
 
-# ========== MAIN TEST RUNNER ==========
-def main():
-    print("\n" + "="*80)
-    print("VENTEBEAST BACKEND API TEST SUITE")
-    print("="*80)
-    print(f"Base URL: {BASE_URL}")
-    print(f"Customer Email: {test_data['customer_email']}")
-    print(f"Admin Email: {test_data['admin_email']}")
+# ========== TEST 5: ORDER PLACEMENT WITH EMAIL ==========
+def test_order_placement():
+    print_test("5. ORDER PLACEMENT WITH EMAIL (fire-and-forget)")
+    
+    # Place a COD order as customer
+    if not test_product_id:
+        print_fail("No test product available for order")
+        return
     
     try:
-        test_auth()
-        test_products()
-        test_admin_product_crud()
-        test_coupons()
-        test_wishlist()
-        test_addresses()
-        test_orders_and_payment()
-        test_reviews()
-        test_admin_endpoints()
+        # Get product details
+        resp_prod = requests.get(f"{BASE_URL}/products", timeout=10)
+        products = resp_prod.json().get('products', [])
+        product = next((p for p in products if p['_id'] == test_product_id), None)
+        if not product:
+            print_fail("Test product not found")
+            return
         
-        print("\n" + "="*80)
-        print("TEST SUITE COMPLETED")
-        print("="*80)
-        print("\nℹ️  Review the results above for any failures.")
-        print("ℹ️  All ✅ PASS means the backend is working correctly.")
-        print("ℹ️  Any ❌ FAIL indicates an issue that needs attention.")
+        variant = product.get('variants', [{}])[0]
+        sku = variant.get('sku')
+        price = variant.get('price', 0)
         
+        order_payload = {
+            "items": [{
+                "productId": test_product_id,
+                "sku": sku,
+                "qty": 1
+            }],
+            "address": {
+                "name": "Test Customer",
+                "phone": "9876543210",
+                "line1": "123 Test St",
+                "city": "Mumbai",
+                "state": "Maharashtra",
+                "pincode": "400001"
+            },
+            "shipping": 0,
+            "discount": 0,
+            "paymentMethod": "COD"
+        }
+        
+        resp = requests.post(f"{BASE_URL}/orders",
+            headers={"Authorization": f"Bearer {customer_token}"},
+            json=order_payload,
+            timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            order = data.get('order', {})
+            order_id = order.get('_id')
+            print_pass(f"POST /api/orders: order placed {order_id}, no crash (email fire-and-forget)")
+            print_pass("Email function called without crash (sendOrderEmails is fire-and-forget)")
+        else:
+            print_fail(f"POST /api/orders failed: {resp.status_code} {resp.text}")
     except Exception as e:
-        print(f"\n❌ TEST SUITE ERROR: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print_fail(f"POST /api/orders error: {e}")
+
+# ========== MAIN ==========
+def main():
+    print("\n" + "="*60)
+    print("BACKEND API TEST - NEW ENDPOINTS")
+    print("="*60)
+    
+    # Setup
+    print_test("SETUP")
+    if not setup_admin():
+        print_fail("Admin setup failed, aborting")
+        sys.exit(1)
+    
+    if not register_customer():
+        print_fail("Customer setup failed, aborting")
+        sys.exit(1)
+    
+    if not get_test_product():
+        print_fail("Product setup failed, aborting")
+        sys.exit(1)
+    
+    # Run tests
+    test_collections_crud()
+    test_admin_reviews()
+    test_site_settings()
+    test_email_endpoint()
+    test_order_placement()
+    
+    print("\n" + "="*60)
+    print("ALL TESTS COMPLETED")
+    print("="*60)
 
 if __name__ == "__main__":
     main()

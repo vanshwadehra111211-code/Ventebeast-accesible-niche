@@ -34,7 +34,7 @@ export default function Footer() {
         </div>
         <div className="mt-16 pt-8 border-t border-white/10 flex flex-col md:flex-row justify-between gap-4 text-[10px] tracking-[0.25em] uppercase text-white/40">
           <div>© 2025 VENTEBEAST — Accessibilis Niche Perfumery</div>
-          <div className="flex gap-6"><span>Privacy</span><span>Terms</span><span>Shipping</span><span>Returns</span></div>
+          <div className="flex gap-6"><span>Privacy</span><span>Terms</span><span>Shipping</span><span>Contact</span></div>
         </div>
       </div>
     </footer>

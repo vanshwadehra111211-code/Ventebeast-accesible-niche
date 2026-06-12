@@ -5,30 +5,9 @@ import { Search, ShoppingBag, User, Heart, Menu, X } from 'lucide-react';
 import { useStore, cartCount } from '@/lib/store';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
+import { api } from '@/lib/api';
 
-// Inline logo SVG — navy whale crest with brand mark
-const Logo = ({ className = 'h-9' }) => (
-  <svg viewBox="0 0 240 60" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="navyG" x1="0" x2="1">
-        <stop offset="0" stopColor="#1c3052"/>
-        <stop offset="0.5" stopColor="#2e4a78"/>
-        <stop offset="1" stopColor="#1c3052"/>
-      </linearGradient>
-    </defs>
-    {/* Whale mark */}
-    <g transform="translate(0,4)">
-      <circle cx="26" cy="26" r="24" stroke="currentColor" strokeWidth="1.2" fill="none" />
-      <path d="M14 30 Q18 22 26 22 Q34 22 40 26 Q42 28 40 30 Q34 34 26 32 Q20 31 18 34 Q16 35 14 30 Z" fill="currentColor" />
-      <path d="M40 26 L46 22 L44 28 Z" fill="currentColor" />
-      <circle cx="34" cy="26" r="1" fill="#fff" />
-      <path d="M10 36 Q18 32 26 36 Q34 40 42 36" stroke="currentColor" strokeWidth="0.8" fill="none" opacity="0.5" />
-    </g>
-    {/* Wordmark */}
-    <text x="60" y="30" fontFamily="Italiana, serif" fontSize="22" letterSpacing="4" fill="currentColor">VENTEBEAST</text>
-    <text x="60" y="46" fontFamily="Inter, sans-serif" fontSize="7" letterSpacing="4" fill="currentColor" opacity="0.55">ACCESSIBILIS NICHE PERFUMERY</text>
-  </svg>
-);
+const LOGO_URL = 'https://cdn.corenexis.com/f/c8lL883bHrO.png';
 
 export default function Header() {
   const router = useRouter();
@@ -36,6 +15,7 @@ export default function Header() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [settings, setSettings] = useState({ logoUrl: LOGO_URL, siteName: 'VENTEBEAST', promoBanner: '' });
   const cart = useStore(s => s.cart);
   const user = useStore(s => s.user);
 
@@ -44,6 +24,7 @@ export default function Header() {
     window.addEventListener('scroll', onScroll);
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+  useEffect(() => { api('settings').then(d => setSettings(d.settings)).catch(() => {}); }, []);
 
   const navLinks = [
     { href: '/collections?gender=Women', label: 'Women' },
@@ -60,16 +41,19 @@ export default function Header() {
 
   return (
     <>
-      {/* Top yellow strip */}
       <div className="bg-gold-400 text-black text-[10px] tracking-[0.3em] uppercase py-1.5 text-center font-bold">
-        USE WELCOME10 FOR 10% OFF FIRST ORDER · FREE SHIPPING ABOVE ₹999
+        {settings.promoBanner || 'USE WELCOME10 FOR 10% OFF FIRST ORDER · FREE SHIPPING ABOVE ₹999'}
       </div>
       <header className={`sticky top-0 z-40 transition-all duration-500 ${scrolled ? 'bg-black/95 backdrop-blur-xl border-b border-white/10' : 'bg-black/30 backdrop-blur-sm'}`}>
         <div className="max-w-[1600px] mx-auto px-4 lg:px-12 h-20 flex items-center justify-between gap-6">
           <div className="flex items-center gap-6 flex-1">
             <button className="lg:hidden" onClick={() => setMenuOpen(true)}><Menu className="w-5 h-5" /></button>
-            <Link href="/" className="text-navy-100 hover:text-white transition-colors">
-              <Logo className="h-9 md:h-10" />
+            <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+              <img src={settings.logoUrl || LOGO_URL} alt="VENTEBEAST" className="h-12 md:h-14 w-auto drop-shadow-lg" />
+              <div className="hidden md:block leading-none">
+                <div className="font-display text-xl tracking-[0.25em]">{settings.siteName || 'VENTEBEAST'}</div>
+                <div className="text-[8px] tracking-[0.3em] uppercase opacity-60 mt-1">Exclusive Parfum</div>
+              </div>
             </Link>
           </div>
           <nav className="hidden lg:flex items-center gap-8 text-[11px] tracking-[0.25em] uppercase font-medium">
@@ -108,7 +92,10 @@ export default function Header() {
         {menuOpen && (
           <motion.div initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ duration: 0.4, ease: [0.4,0,0.2,1] }} className="fixed inset-0 z-50 bg-black">
             <div className="p-6 flex justify-between items-center">
-              <Logo className="h-8 text-white" />
+              <div className="flex items-center gap-2">
+                <img src={settings.logoUrl || LOGO_URL} alt="" className="h-10" />
+                <span className="font-display text-lg tracking-[0.25em]">VENTEBEAST</span>
+              </div>
               <button onClick={() => setMenuOpen(false)}><X className="w-6 h-6" /></button>
             </div>
             <nav className="px-6 mt-8 space-y-6">
