@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuid } from 'uuid';
 import { createHmac } from 'crypto';
-import { OAuth2Client } from 'google-auth-library';
 import { getDb } from '@/lib/mongodb';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
+import firebaseAdmin from '@/lib/firebaseAdmin';
 import { buildSeedDocs } from '@/lib/seed';
 import { sendOrderEmails } from '@/lib/email';
 
@@ -93,15 +93,20 @@ async function handle(req, { params }) {
     if (path === 'auth/google' && method === 'POST') {
       const { idToken } = await req.json();
       if (!idToken) return err('ID token required');
-      const clientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-      if (!clientId) return err('Google OAuth not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in .env', 500);
       let payload;
       try {
-        const ticket = await googleClient.verifyIdToken({ idToken, audience: clientId });
-        payload = ticket.getPayload();
+        const admin = firebaseAdmin;
+        // firebase-admin may not be initialized in non-configured environments
+        if (admin && admin.auth) {
+          const decoded = await admin.auth().verifyIdToken(idToken);
+          payload = decoded;
+        } else {
+          return err('Firebase admin not configured', 500);
+        }
       } catch (e) {
-        return err('Invalid Google token', 401);
+        return err('Invalid Firebase token', 401);
       }
+      // firebase token payload fields: email, email_verified, name, picture, uid
       if (!payload?.email || !payload.email_verified) return err('Google email not verified', 403);
       let user = await db.collection('users').findOne({ email: payload.email.toLowerCase() });
       if (!user) {
@@ -111,7 +116,7 @@ async function handle(req, { params }) {
           email: payload.email.toLowerCase(),
           name: payload.name || payload.email.split('@')[0],
           avatarUrl: payload.picture,
-          googleId: payload.sub,
+          googleId: payload.uid,
           provider: 'google',
           role,
           wishlist: [], addresses: [],
@@ -119,7 +124,7 @@ async function handle(req, { params }) {
         };
         await db.collection('users').insertOne(user);
       } else if (!user.googleId) {
-        await db.collection('users').updateOne({ _id: user._id }, { $set: { googleId: payload.sub, avatarUrl: payload.picture, provider: user.provider || 'hybrid' } });
+        await db.collection('users').updateOne({ _id: user._id }, { $set: { googleId: payload.uid, avatarUrl: payload.picture, provider: user.provider || 'hybrid' } });
       }
       if (isAdminEmail(user.email) && user.role !== 'admin') {
         await db.collection('users').updateOne({ _id: user._id }, { $set: { role: 'admin' } });
