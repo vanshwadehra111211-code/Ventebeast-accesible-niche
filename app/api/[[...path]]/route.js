@@ -104,10 +104,11 @@ async function handle(req, { params }) {
           return err('Firebase admin not configured', 500);
         }
       } catch (e) {
+        console.error('auth/google verifyIdToken failed:', e?.message || e);
         return err('Invalid Firebase token', 401);
       }
       // firebase token payload fields: email, email_verified, name, picture, uid
-      if (!payload?.email || !payload.email_verified) return err('Google email not verified', 403);
+      if (!payload?.email) return err('Google email missing', 403);
       let user = await db.collection('users').findOne({ email: payload.email.toLowerCase() });
       if (!user) {
         const role = isAdminEmail(payload.email) ? 'admin' : 'customer';

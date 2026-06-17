@@ -1,7 +1,6 @@
  'use client';
 import { useState } from 'react';
-import { auth } from '@/lib/firebaseClient';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { signInWithGooglePopup } from '@/lib/firebaseClient';
 import { useStore } from '@/lib/store';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -14,15 +13,14 @@ export default function GoogleSignIn({ onSuccess }) {
   const handleLogin = async () => {
     try {
       setLoading(true);
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth(), provider);
+      const result = await signInWithGooglePopup();
       const idToken = await result.user.getIdToken();
       const u = await loginWithGoogle(idToken);
       toast.success(`Welcome, ${u.name}`);
       if (onSuccess) onSuccess(u); else router.push(u.role === 'admin' ? '/admin' : '/account');
     } catch (e) {
-      console.error(e);
-      toast.error('Google sign-in failed');
+      console.error('Google sign-in error:', e);
+      toast.error(e?.message || 'Google sign-in failed');
     } finally { setLoading(false); }
   };
 
