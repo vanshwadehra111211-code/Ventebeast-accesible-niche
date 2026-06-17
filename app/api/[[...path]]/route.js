@@ -49,12 +49,22 @@ async function handle(req, { params }) {
     if (path === 'auth/register' && method === 'POST') {
       const { email, password, name } = await req.json();
       if (!email || !password) return err('Email and password required');
-      const existing = await db.collection('users').findOne({ email: email.toLowerCase() });
-      if (existing) return err('Email already registered', 409);
+      const normalizedEmail = email.toLowerCase();
+      const existing = await db.collection('users').findOne({ email: normalizedEmail });
+      if (existing) {
+        if (!existing.passwordHash) {
+          const updates = { passwordHash: await hashPassword(password) };
+          if (!existing.name && name) updates.name = name;
+          await db.collection('users').updateOne({ _id: existing._id }, { $set: updates });
+          const token = signToken({ userId: existing._id, role: existing.role || (isAdminEmail(email) ? 'admin' : 'customer') });
+          return ok({ token, user: { id: existing._id, email: existing.email, name: existing.name || name || existing.email.split('@')[0], role: existing.role || (isAdminEmail(email) ? 'admin' : 'customer') } });
+        }
+        return err('Email already registered', 409);
+      }
       const role = isAdminEmail(email) ? 'admin' : 'customer';
       const user = {
         _id: uuid(),
-        email: email.toLowerCase(),
+        email: normalizedEmail,
         name: name || email.split('@')[0],
         passwordHash: await hashPassword(password),
         role,
@@ -122,10 +132,17 @@ async function handle(req, { params }) {
     if (path === 'auth/google' && method === 'POST') {
       const { idToken } = await req.json();
       if (!idToken) return err('ID token required');
+      if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+        console.error('auth/google missing Firebase admin env:', {
+          projectId: !!process.env.FIREBASE_PROJECT_ID,
+          clientEmail: !!process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: !!process.env.FIREBASE_PRIVATE_KEY,
+        });
+        return err('Firebase admin not configured on server', 500);
+      }
       let payload;
       try {
         const admin = firebaseAdmin;
-        // firebase-admin may not be initialized in non-configured environments
         if (admin && admin.auth) {
           const decoded = await admin.auth().verifyIdToken(idToken);
           payload = decoded;
@@ -134,7 +151,7 @@ async function handle(req, { params }) {
         }
       } catch (e) {
         console.error('auth/google verifyIdToken failed:', e?.message || e);
-        return err('Invalid Firebase token', 401);
+        return err(`Firebase token verification failed: ${e?.message || 'unknown error'}`, 401);
       }
       // firebase token payload fields: email, email_verified, name, picture, uid
       if (!payload?.email) return err('Google email missing', 403);

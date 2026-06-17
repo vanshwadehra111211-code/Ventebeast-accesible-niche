@@ -31,7 +31,7 @@ function RegisterInner() {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center px-6 py-16">
-      <div className="max-w-md w-full">
+      <div className="max-w-md w-full rounded-[2rem] border border-white/10 bg-primary/95 p-8 shadow-2xl text-white">
         <div className="text-center mb-12">
           <div className="text-[10px] tracking-[0.4em] uppercase text-white/40 mb-4">Join VENTEBEAST</div>
           <h1 className="font-display text-5xl">Create Account</h1>
