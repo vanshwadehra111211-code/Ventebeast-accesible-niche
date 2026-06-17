@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuid } from 'uuid';
+import { createHmac } from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { getDb } from '@/lib/mongodb';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
@@ -277,6 +278,100 @@ async function handle(req, { params }) {
       if (c.type === 'percentage') discount = Math.round(subtotal * c.value / 100);
       return ok({ coupon: { code: c.code, type: c.type, value: c.value, discount, freeShipping: c.type === 'free_shipping' } });
     }
+    if (path === 'payments/razorpay-order' && method === 'POST') {
+      const user = await currentUser(req);
+      const a = requireAuth(user); if (a) return a;
+      const { items, address, shipping = 0, discount = 0, couponCode, currency = 'INR' } = await req.json();
+      if (!items?.length) return err('Cart is empty');
+      let subtotal = 0;
+      const validated = [];
+      for (const it of items) {
+        const product = await db.collection('products').findOne({ _id: it.productId });
+        if (!product) return err(`Product ${it.productId} not found`);
+        const variant = product.variants.find(v => v.sku === it.sku);
+        if (!variant) return err(`Variant ${it.sku} not found`);
+        if (variant.stock < it.qty) return err(`Insufficient stock for ${product.name} ${variant.size}`);
+        const price = Number(it.price || variant.price);
+        if (!price || price <= 0) return err(`Invalid price for ${product.name}`);
+        validated.push({
+          productId: product._id, slug: product.slug, name: product.name,
+          image: product.images?.[0], sku: variant.sku, size: variant.size,
+          price, qty: it.qty, total: price * it.qty, bundleLabel: it.bundleLabel || null,
+        });
+        subtotal += price * it.qty;
+      }
+      const total = subtotal - discount + shipping;
+      const keyId = process.env.RAZORPAY_KEY_ID;
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      if (!keyId || !keySecret) return err('Razorpay is not configured', 500);
+      const resp = await fetch('https://api.razorpay.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ amount: total * 100, currency, receipt: `VB-${Date.now()}`, payment_capture: 1, notes: { userId: user._id, email: user.email } }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        console.error('Razorpay create order failed:', text);
+        return err('Unable to initialize payment', 500);
+      }
+      const razorpayOrder = await resp.json();
+      return ok({ razorpayOrder, keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || keyId });
+    }
+    if (path === 'payments/razorpay-confirm' && method === 'POST') {
+      const user = await currentUser(req);
+      const a = requireAuth(user); if (a) return a;
+      const { razorpay_payment_id, razorpay_order_id, razorpay_signature, items, address, shipping = 0, discount = 0, couponCode } = await req.json();
+      if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) return err('Payment verification failed');
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      if (!keySecret) return err('Razorpay is not configured', 500);
+      const expected = createHmac('sha256', keySecret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest('hex');
+      if (expected !== razorpay_signature) return err('Invalid payment signature', 400);
+      if (!items?.length) return err('Cart is empty');
+      let subtotal = 0;
+      const validated = [];
+      for (const it of items) {
+        const product = await db.collection('products').findOne({ _id: it.productId });
+        if (!product) return err(`Product ${it.productId} not found`);
+        const variant = product.variants.find(v => v.sku === it.sku);
+        if (!variant) return err(`Variant ${it.sku} not found`);
+        if (variant.stock < it.qty) return err(`Insufficient stock for ${product.name} ${variant.size}`);
+        const price = Number(it.price || variant.price);
+        if (!price || price <= 0) return err(`Invalid price for ${product.name}`);
+        validated.push({
+          productId: product._id, slug: product.slug, name: product.name,
+          image: product.images?.[0], sku: variant.sku, size: variant.size,
+          price, qty: it.qty, total: price * it.qty, bundleLabel: it.bundleLabel || null,
+        });
+        subtotal += price * it.qty;
+      }
+      const total = subtotal - discount + shipping;
+      const order = {
+        _id: uuid(),
+        orderNumber: 'VB-' + Date.now().toString(36).toUpperCase(),
+        userId: user._id, userEmail: user.email,
+        items: validated, address, subtotal, discount, shipping, total,
+        couponCode: couponCode || null,
+        paymentMethod: 'RAZORPAY', paymentStatus: 'paid', transactionId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
+        status: 'confirmed', createdAt: new Date(),
+      };
+      await db.collection('orders').insertOne(order);
+      for (const it of validated) {
+        const product = await db.collection('products').findOne({ _id: it.productId });
+        if (!product) continue;
+        const variants = (product.variants || []).map((variant) =>
+          variant.sku === it.sku ? { ...variant, stock: (variant.stock || 0) - it.qty } : variant
+        );
+        await db.collection('products').updateOne(
+          { _id: it.productId },
+          { $set: { variants } }
+        );
+      }
+      sendOrderEmails(order).catch(e => console.error('email send error:', e));
+      return ok({ order });
+    }
     if (path === 'admin/coupons' && method === 'GET') {
       const user = await currentUser(req);
       const a = requireAdmin(user); if (a) return a;
@@ -309,14 +404,12 @@ async function handle(req, { params }) {
       };
       await db.collection('reviews').insertOne(doc);
       // recompute product rating
-      const agg = await db.collection('reviews').aggregate([
-        { $match: { productId } },
-        { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
-      ]).toArray();
-      if (agg[0]) {
+      const ratings = await db.collection('reviews').find({ productId }).toArray();
+      if (ratings.length) {
+        const avg = ratings.reduce((sum, r) => sum + (r.rating || 0), 0) / ratings.length;
         await db.collection('products').updateOne(
           { _id: productId },
-          { $set: { rating: Math.round(agg[0].avg * 10) / 10, reviewCount: agg[0].count } }
+          { $set: { rating: Math.round(avg * 10) / 10, reviewCount: ratings.length } }
         );
       }
       return ok({ review: doc });
@@ -345,12 +438,14 @@ async function handle(req, { params }) {
         const variant = product.variants.find(v => v.sku === it.sku);
         if (!variant) return err(`Variant ${it.sku} not found`);
         if (variant.stock < it.qty) return err(`Insufficient stock for ${product.name} ${variant.size}`);
-        validated.push({
+        const price = Number(it.price || variant.price);
+      if (!price || price <= 0) return err(`Invalid price for ${product.name}`);
+      validated.push({
           productId: product._id, slug: product.slug, name: product.name,
           image: product.images?.[0], sku: variant.sku, size: variant.size,
-          price: variant.price, qty: it.qty, total: variant.price * it.qty,
+          price, qty: it.qty, total: price * it.qty, bundleLabel: it.bundleLabel || null,
         });
-        subtotal += variant.price * it.qty;
+        subtotal += price * it.qty;
       }
       const total = subtotal - discount + shipping;
       const order = {
@@ -364,11 +459,16 @@ async function handle(req, { params }) {
       };
       await db.collection('orders').insertOne(order);
 
-      // Decrement stock atomically
+      // Decrement stock
       for (const it of validated) {
+        const product = await db.collection('products').findOne({ _id: it.productId });
+        if (!product) continue;
+        const variants = (product.variants || []).map((variant) =>
+          variant.sku === it.sku ? { ...variant, stock: (variant.stock || 0) - it.qty } : variant
+        );
         await db.collection('products').updateOne(
-          { _id: it.productId, 'variants.sku': it.sku },
-          { $inc: { 'variants.$.stock': -it.qty } }
+          { _id: it.productId },
+          { $set: { variants } }
         );
       }
 
@@ -408,18 +508,16 @@ async function handle(req, { params }) {
     if (path === 'admin/stats' && method === 'GET') {
       const user = await currentUser(req);
       const a = requireAdmin(user); if (a) return a;
-      const [productCount, orderCount, userCount, paidAgg] = await Promise.all([
+      const [productCount, orderCount, userCount, paidOrders] = await Promise.all([
         db.collection('products').countDocuments(),
         db.collection('orders').countDocuments(),
         db.collection('users').countDocuments(),
-        db.collection('orders').aggregate([
-          { $match: { paymentStatus: 'paid' } },
-          { $group: { _id: null, revenue: { $sum: '$total' } } }
-        ]).toArray(),
+        db.collection('orders').find({ paymentStatus: 'paid' }).toArray(),
       ]);
+      const revenue = paidOrders.reduce((sum, order) => sum + (order.total || 0), 0);
       const recentOrders = await db.collection('orders').find({}).sort({ createdAt: -1 }).limit(10).toArray();
       return ok({
-        stats: { productCount, orderCount, userCount, revenue: paidAgg[0]?.revenue || 0 },
+        stats: { productCount, orderCount, userCount, revenue },
         recentOrders,
       });
     }
@@ -517,13 +615,11 @@ async function handle(req, { params }) {
       await db.collection('reviews').deleteOne({ _id: id });
       // recompute product rating
       if (review) {
-        const agg = await db.collection('reviews').aggregate([
-          { $match: { productId: review.productId } },
-          { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
-        ]).toArray();
+        const ratings = await db.collection('reviews').find({ productId: review.productId }).toArray();
+        const avg = ratings.length ? ratings.reduce((sum, r) => sum + (r.rating || 0), 0) / ratings.length : 0;
         await db.collection('products').updateOne(
           { _id: review.productId },
-          { $set: { rating: agg[0] ? Math.round(agg[0].avg * 10) / 10 : 0, reviewCount: agg[0]?.count || 0 } }
+          { $set: { rating: Math.round(avg * 10) / 10, reviewCount: ratings.length } }
         );
       }
       return ok({ ok: true });
@@ -539,14 +635,12 @@ async function handle(req, { params }) {
         verified: true, addedByAdmin: true, createdAt: new Date(),
       };
       await db.collection('reviews').insertOne(doc);
-      const agg = await db.collection('reviews').aggregate([
-        { $match: { productId } },
-        { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } }
-      ]).toArray();
-      if (agg[0]) {
+      const ratings = await db.collection('reviews').find({ productId }).toArray();
+      if (ratings.length) {
+        const avg = ratings.reduce((sum, r) => sum + (r.rating || 0), 0) / ratings.length;
         await db.collection('products').updateOne(
           { _id: productId },
-          { $set: { rating: Math.round(agg[0].avg * 10) / 10, reviewCount: agg[0].count } }
+          { $set: { rating: Math.round(avg * 10) / 10, reviewCount: ratings.length } }
         );
       }
       return ok({ review: doc });

@@ -19,7 +19,7 @@ const ProductPage = () => {
   const { slug } = useParams();
   const router = useRouter();
   const [data, setData] = useState(null);
-  const [bundleId, setBundleId] = useState('pack-1');
+  const [bundleId, setBundleId] = useState('pack-3');
   const [reviews, setReviews] = useState([]);
   const [openSection, setOpenSection] = useState('desc');
   const [newReview, setNewReview] = useState({ rating: 5, title: '', body: '' });
@@ -224,7 +224,7 @@ const ProductPage = () => {
           <div className="mt-6 grid grid-cols-3 gap-3 text-[10px] tracking-[0.2em] uppercase opacity-70">
             <div className="flex items-center gap-2"><Truck className="w-4 h-4" /> Free above ₹999</div>
             <div className="flex items-center gap-2"><Shield className="w-4 h-4" /> 100% Authentic</div>
-            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4" /> COD Available</div>
+            <div className="flex items-center gap-2"><Sparkles className="w-4 h-4" /> Pay now with Razorpay</div>
           </div>
 
           {/* Frequently bought together */}
@@ -284,15 +284,6 @@ const ProductPage = () => {
             ))}
           </div>
         </motion.div>
-      </div>
-
-      {/* Marquee with product name */}
-      <div className={`${T.marquee} py-6 overflow-hidden`}>
-        <div className="marquee inline-flex whitespace-nowrap">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <span key={i} className="font-display text-5xl md:text-7xl px-10 tracking-[0.1em]">{p.name.toUpperCase()}</span>
-          ))}
-        </div>
       </div>
 
       {/* Lifestyle band */}
