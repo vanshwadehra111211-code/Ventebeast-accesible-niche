@@ -7,8 +7,7 @@ const nextConfig = {
     ],
   },
   experimental: {
-    // Remove if not using Server Components
-    serverComponentsExternalPackages: ['mongodb'],
+    // Firebase Firestore doesn't require external packages
   },
   webpack(config, { dev }) {
     if (dev) {

@@ -56,7 +56,6 @@
         "jsonwebtoken": "^9.0.3",
         "lodash": "4.18.1",
         "lucide-react": "0.516.0",
-        "mongodb": "6.6.0",
         "firebase-admin": "^11.11.0",
         "next": "14.2.3",
         "next-themes": "0.4.6",

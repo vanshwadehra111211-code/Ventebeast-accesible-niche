@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuid } from 'uuid';
 import { createHmac } from 'crypto';
-import { getDb } from '@/lib/mongodb';
+import { getDb } from '@/lib/firestore';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
 import firebaseAdmin from '@/lib/firebaseAdmin';
 import { buildSeedDocs } from '@/lib/seed';
 import { sendOrderEmails } from '@/lib/email';
-
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
 const ok = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -65,6 +63,8 @@ async function handle(req, { params }) {
         createdAt: new Date(),
       };
       await db.collection('users').insertOne(user);
+      // send welcome email with credentials (non-blocking)
+      try { const { sendWelcomeEmail } = await import('@/lib/email'); sendWelcomeEmail(user.email, user.name, password).catch(()=>{}); } catch (e) {}
       const token = signToken({ userId: user._id, role: user.role });
       return ok({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
     }
