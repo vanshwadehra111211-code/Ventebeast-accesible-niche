@@ -114,9 +114,15 @@ const AdminPage = () => {
 
   return (
     <div className="max-w-[1600px] mx-auto px-6 lg:px-12 pt-12 pb-32">
-      <div className="mb-8">
-        <div className="text-[10px] tracking-[0.4em] uppercase text-gold-400 mb-2">Admin Console</div>
-        <h1 className="font-display text-5xl">VENTEBEAST Atelier</h1>
+      <div className="mb-8 flex items-center gap-6">
+        <div className="w-20 h-20 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#10b981 0%,#ffffff 50%,#1e3a8a 100%)' }}>
+          <div className="text-xl font-bold text-black">VB</div>
+        </div>
+        <div>
+          <div className="text-[10px] tracking-[0.4em] uppercase text-gold-400 mb-2">Admin Console</div>
+          <h1 className="font-display text-5xl">VENTEBEAST Atelier</h1>
+          <p className="text-white/60 mt-2">Welcome back — friendly dashboard for products, orders, and customers.</p>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-white/10 mb-8 overflow-x-auto">
