@@ -115,13 +115,22 @@ const AdminPage = () => {
   return (
     <div className="max-w-[1600px] mx-auto px-6 lg:px-12 pt-12 pb-32">
       <div className="mb-8 flex items-center gap-6">
-        <div className="w-20 h-20 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#10b981 0%,#ffffff 50%,#1e3a8a 100%)' }}>
-          <div className="text-xl font-bold text-black">VB</div>
+        <div className="w-20 h-20 rounded-lg flex flex-col items-center justify-center p-2" style={{ background: 'linear-gradient(135deg,#10b981 0%,#ffffff 50%,#1e3a8a 100%)' }}>
+          <div className="text-xl font-bold text-white">VB</div>
+          <div className="text-[10px] text-white/90 mt-1 px-1 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.08)' }}>Brand</div>
         </div>
         <div>
           <div className="text-[10px] tracking-[0.4em] uppercase text-gold-400 mb-2">Admin Console</div>
           <h1 className="font-display text-5xl">VENTEBEAST Atelier</h1>
-          <p className="text-white/60 mt-2">Welcome back — friendly dashboard for products, orders, and customers.</p>
+          <p className="text-white/60 mt-2">Welcome back — manage products, orders, and customers with ease.</p>
+          <div className="mt-2 flex items-center gap-3 text-sm text-white/60">
+            <div className="flex items-center gap-1">
+              <span className="w-3 h-3 rounded-full" style={{ background: '#10b981' }} />
+              <span className="w-3 h-3 rounded-full border" style={{ background: '#ffffff' }} />
+              <span className="w-3 h-3 rounded-full" style={{ background: '#1e3a8a' }} />
+            </div>
+            <div>Theme: Green · White · Navy</div>
+          </div>
         </div>
       </div>
 
