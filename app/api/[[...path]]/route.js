@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { v4 as uuid } from 'uuid';
-import { createHmac } from 'crypto';
+import { createHmac, randomInt } from 'crypto';
 import { getDb } from '@/lib/firestore';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
 import firebaseAdmin from '@/lib/firebaseAdmin';
 import { buildSeedDocs } from '@/lib/seed';
-import { sendOrderEmails } from '@/lib/email';
+import { sendOrderEmails, sendLoginCodeEmail } from '@/lib/email';
 
 const ok = (data, status = 200) => NextResponse.json(data, { status });
 const err = (message, status = 400) => NextResponse.json({ error: message }, { status });
@@ -73,9 +73,38 @@ async function handle(req, { params }) {
       const { email, password } = await req.json();
       const user = await db.collection('users').findOne({ email: email.toLowerCase() });
       if (!user) return err('Invalid credentials', 401);
+      if (!user.passwordHash) return err('No password set for this account. Use verification code login.', 403);
       const valid = await comparePassword(password, user.passwordHash);
       if (!valid) return err('Invalid credentials', 401);
       // Auto-promote admin email
+      if (isAdminEmail(user.email) && user.role !== 'admin') {
+        await db.collection('users').updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+        user.role = 'admin';
+      }
+      const token = signToken({ userId: user._id, role: user.role });
+      return ok({ token, user: { id: user._id, email: user.email, name: user.name, role: user.role } });
+    }
+
+    if (path === 'auth/send-login-code' && method === 'POST') {
+      const { email } = await req.json();
+      if (!email) return err('Email required');
+      const user = await db.collection('users').findOne({ email: email.toLowerCase() });
+      if (!user) return err('No account found for that email', 404);
+      const code = String(randomInt(100000, 999999));
+      const expiresAt = new Date(Date.now() + 1000 * 60 * 10);
+      await db.collection('users').updateOne({ _id: user._id }, { $set: { loginCode: code, loginCodeExpires: expiresAt } });
+      try { await sendLoginCodeEmail(user.email, code); } catch (e) { console.error('sendLoginCodeEmail error:', e); }
+      return ok({ message: 'Verification code sent' });
+    }
+
+    if (path === 'auth/verify-login-code' && method === 'POST') {
+      const { email, code } = await req.json();
+      if (!email || !code) return err('Email and code required');
+      const user = await db.collection('users').findOne({ email: email.toLowerCase() });
+      if (!user) return err('Invalid email or code', 401);
+      if (!user.loginCode || !user.loginCodeExpires) return err('No code requested', 401);
+      if (user.loginCode !== code || new Date(user.loginCodeExpires) < new Date()) return err('Invalid or expired code', 401);
+      await db.collection('users').updateOne({ _id: user._id }, { $set: { loginCode: null, loginCodeExpires: null } });
       if (isAdminEmail(user.email) && user.role !== 'admin') {
         await db.collection('users').updateOne({ _id: user._id }, { $set: { role: 'admin' } });
         user.role = 'admin';
