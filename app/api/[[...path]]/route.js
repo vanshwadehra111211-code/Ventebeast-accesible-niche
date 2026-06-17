@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { createHmac, randomInt } from 'crypto';
 import { getDb } from '@/lib/firestore';
 import { signToken, verifyToken, hashPassword, comparePassword, isAdminEmail } from '@/lib/auth';
-import firebaseAdmin from '@/lib/firebaseAdmin';
+import { getFirebaseAdmin } from '@/lib/firebaseAdmin';
 import { buildSeedDocs } from '@/lib/seed';
 import { sendOrderEmails, sendLoginCodeEmail } from '@/lib/email';
 
@@ -142,16 +142,15 @@ async function handle(req, { params }) {
       }
       let payload;
       try {
-        const admin = firebaseAdmin;
-        if (admin && admin.auth) {
-          const decoded = await admin.auth().verifyIdToken(idToken);
-          payload = decoded;
-        } else {
-          return err('Firebase admin not configured', 500);
-        }
+        const admin = getFirebaseAdmin();
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        payload = decoded;
       } catch (e) {
         console.error('auth/google verifyIdToken failed:', e?.message || e);
-        return err(`Firebase token verification failed: ${e?.message || 'unknown error'}`, 401);
+        const message = e?.message?.includes('Firebase admin not configured')
+          ? 'Firebase admin is not configured correctly on server'
+          : `Firebase token verification failed: ${e?.message || 'unknown error'}`;
+        return err(message, e?.message?.includes('Firebase admin not configured') ? 500 : 401);
       }
       // firebase token payload fields: email, email_verified, name, picture, uid
       if (!payload?.email) return err('Google email missing', 403);
